@@ -1,0 +1,84 @@
+name: Workflow for install-docker
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+  create:
+    tags:
+      - '*'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    container: 
+      image: rancher/dapper:v0.6.0
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Validate
+        run: dapper validate
+
+  test:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    container: 
+      image: rancher/dapper:v0.6.0
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Test
+        run: dapper test
+
+  add-commit-to-version-file:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Add commit to version file
+        run: |
+          echo "{\"version\": \"${{ github.sha }}\"}" > dist/VERSION"
+  
+  upload-dev:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Google Cloud SDK
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_AUTH_KEY }}
+        run: |
+          gsutil cp -r dist/* gs://releases.rancher.com/install-docker-dev
+          gsutil -m acl ch -r -u AllUsers:R gs://releases.rancher.com/install-docker-dev
+          gsutil -m setmeta -r -h "Cache-Control:public,no-cache,proxy-revalidate" gs://releases.rancher.com/install-docker-dev
+
+  
+  add-tag-to-version-file:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'create' && github.ref_type == 'tag'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Add tag to version file
+        run: |
+          echo "{\"version\": \"${{ github.ref_name }}\"}" > dist/VERSION"
+
+  upload:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'create' && github.ref_type == 'tag'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Upload to GCS
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_AUTH_KEY }}
+        run: |
+          echo $GOOGLE_APPLICATION_CREDENTIALS | gcloud auth activate-service-account --key-file=-
+          gsutil cp -r dist/* gs://releases.rancher.com/install-docker
+          gsutil -m acl ch -r -u AllUsers:R gs://releases.rancher.com/install-docker
+          gsutil -m setmeta -r -h "Cache-Control:public,no-cache,proxy-revalidate" gs://releases.rancher.com/install-docker
